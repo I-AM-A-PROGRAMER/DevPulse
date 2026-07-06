@@ -21,3 +21,13 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# production
+/dist
+/out
+
+# IDE / Agent configs
+.gemini/
+.agents/
+.claude/
+.vscode/
