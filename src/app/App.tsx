@@ -2,12 +2,12 @@ import { useState, useEffect, useMemo, CSSProperties, ReactNode } from "react";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
-  bg:        "#080c18",
-  bgAlt:     "#0b1020",
-  card:      "#0f1525",
-  cardHover: "#131929",
-  border:    "rgba(255,255,255,0.07)",
-  borderHi:  "rgba(255,255,255,0.13)",
+  bg:        "#09090b",
+  bgAlt:     "#121212",
+  card:      "#161618",
+  cardHover: "#1f1f23",
+  border:    "rgba(255,255,255,0.08)",
+  borderHi:  "rgba(255,255,255,0.15)",
   primary:   "#06c8e8",
   primaryDim:"rgba(6,200,232,0.12)",
   violet:    "#7c3aed",
@@ -17,9 +17,9 @@ const C = {
   amber:     "#f59e0b",
   amberDim:  "rgba(245,158,11,0.15)",
   red:       "#ef4444",
-  text:      "#e2e8f0",
-  textSub:   "#94a3b8",
-  textMuted: "#64748b",
+  text:      "#f4f4f5",
+  textSub:   "#a1a1aa",
+  textMuted: "#71717a",
   mono:      "'Geist Mono', monospace",
 } as const;
 
@@ -447,7 +447,7 @@ function InputField({
           onChange={(e) => onChange(e.target.value)}
           style={{
             width: "100%",
-            background: "#1a2035",
+            background: "#161618",
             border: `1px solid ${C.border}`,
             borderRadius: 10,
             padding: `10px ${right ? "40px" : "12px"} 10px ${icon ? "38px" : "12px"}`,
@@ -483,7 +483,7 @@ function ScoreBreakdown({ dev }: { dev: Developer }) {
   ];
   return (
     <div style={{
-      background: "#0b1020",
+      background: "#121212",
       border: `1px solid ${C.borderHi}`,
       borderRadius: 12, padding: "12px 14px",
       minWidth: 220,
@@ -2343,7 +2343,7 @@ export default function App() {
                   rows={3}
                   style={{
                     width: "100%",
-                    background: "#1a2035",
+                    background: "#161618",
                     border: `1px solid ${C.border}`,
                     borderRadius: 10,
                     padding: 10,
