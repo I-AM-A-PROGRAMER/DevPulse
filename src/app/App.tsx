@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, CSSProperties, ReactNode } from "react";
+import { auth, googleProvider, signInWithPopup, signOut } from "../firebase";
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
@@ -580,6 +581,7 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPass, setLoginPass] = useState("");
   const [showPass, setShowPass] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   const [registerName, setRegisterName] = useState("");
   const [registerEmail, setRegisterEmail] = useState("");
@@ -796,6 +798,7 @@ export default function App() {
   // Login handler
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setLoginError(null);
     const email = loginEmail.trim();
     if (!email) return;
 
@@ -807,43 +810,11 @@ export default function App() {
       setViewingDeveloperId(matched.id);
       setPage("dashboard");
       setTab("dashboard");
+      setLoginEmail("");
+      setLoginPass("");
     } else {
-      // Auto-register a user for testing ease
-      const username = email.split('@')[0];
-      const newDev: Developer = {
-        id: Date.now(),
-        name: username.toUpperCase(),
-        username: username,
-        email: email,
-        role: "Full-Stack Intern",
-        avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&auto=format",
-        joinDate: new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-        streak: 1,
-        commits: 15,
-        prs: 2,
-        reviews: 1,
-        coursesCompleted: 0,
-        totalCourses: 10,
-        skills: [],
-        recentActivity: `Joined DevPulse dashboard!`,
-        bio: "# add a bio in profile settings",
-        topLanguage: "React",
-        followers: 0,
-        following: 0,
-        repos: 2,
-        checkIns: [new Date().toISOString().split('T')[0]],
-        todos: []
-      };
-
-      setDevelopers(prev => [...prev, newDev]);
-      setCurrentUserId(newDev.id);
-      setViewingDeveloperId(newDev.id);
-      setPage("dashboard");
-      setTab("dashboard");
+      setLoginError("Account does not exist. Please register first.");
     }
-
-    setLoginEmail("");
-    setLoginPass("");
   };
 
   // Register handler
@@ -893,27 +864,43 @@ export default function App() {
     setRegisterConf("");
   };
 
-  // Google Login / Signup simulation
-  const handleGoogleAuth = () => {
-    const email = "supriyo3606@gmail.com";
-    const matched = developers.find(d => d.email.toLowerCase() === email);
+  // Google Login / Signup via Firebase
+  const handleGoogleAuth = async () => {
+    setLoginError(null);
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      if (!user || !user.email) {
+        setLoginError("Google login failed. No user email returned.");
+        return;
+      }
+      
+      const email = user.email.toLowerCase();
+      const matched = developers.find(d => d.email.toLowerCase() === email);
 
-    if (matched) {
-      setCurrentUserId(matched.id);
-      setViewingDeveloperId(matched.id);
-    } else {
-      // Reset SUPRIYO details
-      const supriyoDev = INITIAL_DEVS[0];
-      setDevelopers(prev => [supriyoDev, ...prev.filter(d => d.email !== email)]);
-      setCurrentUserId(supriyoDev.id);
-      setViewingDeveloperId(supriyoDev.id);
+      if (matched) {
+        setCurrentUserId(matched.id);
+        setViewingDeveloperId(matched.id);
+        setPage("dashboard");
+        setTab("dashboard");
+      } else {
+        // Sign out since the account doesn't exist
+        await signOut(auth);
+        setLoginError(`Access denied. Google account (${user.email}) is not registered.`);
+      }
+    } catch (err: any) {
+      console.error("Firebase auth error:", err);
+      setLoginError(err.message || "Failed to authenticate with Google.");
     }
-    setPage("dashboard");
-    setTab("dashboard");
   };
 
   // Logout handler
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.error("Firebase sign out error:", err);
+    }
     setPage("login");
     setViewingDeveloperId(currentUserId);
   };
@@ -1034,6 +1021,20 @@ export default function App() {
                 <p style={{ fontSize: 12, color: C.textMuted, fontFamily: C.mono, marginBottom: 24 }}>enter your credentials to access devpulse</p>
 
                 <form onSubmit={handleLoginSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  {loginError && (
+                    <div style={{
+                      padding: "10px 12px",
+                      borderRadius: 8,
+                      background: "rgba(239, 68, 68, 0.1)",
+                      border: "1px solid rgba(239, 68, 68, 0.2)",
+                      color: C.red,
+                      fontSize: 12,
+                      fontFamily: C.mono,
+                      lineHeight: 1.4,
+                    }}>
+                      {loginError}
+                    </div>
+                  )}
                   <InputField
                     label="Email"
                     placeholder="you@devpulse.dev"
