@@ -286,6 +286,54 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
+app.post("/api/auth/google", async (req, res) => {
+  try {
+    const { email, name, avatar } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required." });
+    }
+
+    let developer = await Developer.findOne({ email: email.toLowerCase() });
+    
+    if (!developer) {
+      // Auto-register
+      const lastDev = await Developer.findOne({}).sort({ id: -1 });
+      const id = lastDev ? lastDev.id + 1 : 1;
+
+      developer = new Developer({
+        id,
+        name,
+        email: email.toLowerCase(),
+        avatar: avatar || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&auto=format",
+        username: "", // empty username triggers forced Edit Profile Modal
+        role: "Developer Intern",
+        joinDate: new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+        streak: 1,
+        commits: 0,
+        prs: 0,
+        reviews: 0,
+        coursesCompleted: 0,
+        totalCourses: 10,
+        skills: [],
+        recentActivity: `Joined DevPulse via Google Auth!`,
+        bio: "# add a bio in profile settings",
+        topLanguage: "JavaScript",
+        followers: 0,
+        following: 0,
+        repos: 0,
+        checkIns: [new Date().toISOString().split('T')[0]],
+        todos: []
+      });
+      await developer.save();
+    }
+
+    const token = jwt.sign({ id: developer.id, email: developer.email }, JWT_SECRET, { expiresIn: "7d" });
+    res.json({ token, developer });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 2. Get all developers
 app.get("/api/developers", async (req, res) => {
   try {

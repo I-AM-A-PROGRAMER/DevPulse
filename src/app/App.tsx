@@ -1091,17 +1091,13 @@ export default function App() {
     const name = registerName.trim();
     const github = registerGithub.trim();
     const password = registerPass;
-    const confirm = registerConf;
 
     if (!email || !name || !password) {
       alert("Name, Email, and Password are required.");
       return;
     }
 
-    if (password !== confirm) {
-      alert("Passwords do not match.");
-      return;
-    }
+
 
     fetch(`${API_URL}/auth/register`, {
       method: "POST",
@@ -1146,62 +1142,38 @@ export default function App() {
       }
       
       const email = user.email.toLowerCase();
-      const matched = developers.find(d => d.email.toLowerCase() === email);
+      const name = user.displayName || email.split('@')[0].toUpperCase();
+      const avatar = user.photoURL || "";
 
-      if (matched) {
-        setCurrentUserId(matched.id);
-        setViewingDeveloperId(matched.id);
-        setPage("dashboard");
-        setTab("dashboard");
-      } else {
-        // Auto-register user since it doesn't exist
-        const username = email.split('@')[0];
-        const newDev: Developer = {
-          id: Date.now(),
-          name: user.displayName || username.toUpperCase(),
-          username: "", // empty so it triggers the mandatory username input popup!
-          email: user.email,
-          role: "Developer Intern",
-          avatar: user.photoURL || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&auto=format",
-          joinDate: new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-          streak: 1,
-          commits: 0,
-          prs: 0,
-          reviews: 0,
-          coursesCompleted: 0,
-          totalCourses: 10,
-          skills: [],
-          recentActivity: `Joined DevPulse via Google Auth!`,
-          bio: "# add a bio in profile settings",
-          topLanguage: "JavaScript",
-          followers: 0,
-          following: 0,
-          repos: 0,
-          checkIns: [new Date().toISOString().split('T')[0]],
-          todos: []
-        };
-
-        fetch(`${API_URL}/developers`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(newDev)
+      fetch(`${API_URL}/auth/google`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, name, avatar })
+      })
+        .then(res => {
+          if (!res.ok) {
+            return res.json().then(data => { throw new Error(data.error || "Google auth failed"); });
+          }
+          return res.json();
         })
-          .then(res => {
-            if (!res.ok) throw new Error("Failed to auto-register");
-            return res.json();
-          })
-          .then(savedDev => {
-            setDevelopers(prev => [...prev, savedDev]);
-            setCurrentUserId(savedDev.id);
-            setViewingDeveloperId(savedDev.id);
-            setPage("dashboard");
-            setTab("dashboard");
-          })
-          .catch(err => {
-            console.error("Failed to auto-register via Google in backend:", err);
-            setLoginError("Failed to register account on backend. Please try again.");
+        .then(data => {
+          setToken(data.token);
+          setDevelopers(prev => {
+            const exists = prev.some(d => d.id === data.developer.id);
+            if (exists) {
+              return prev.map(d => d.id === data.developer.id ? data.developer : d);
+            }
+            return [...prev, data.developer];
           });
-      }
+          setCurrentUserId(data.developer.id);
+          setViewingDeveloperId(data.developer.id);
+          setPage("dashboard");
+          setTab("dashboard");
+        })
+        .catch(err => {
+          console.error("Google Auth Backend error:", err);
+          setLoginError(err.message || "Failed to sync Google user with backend.");
+        });
     } catch (err: any) {
       console.error("Firebase auth error:", err);
       setLoginError(err.message || "Failed to authenticate with Google.");
