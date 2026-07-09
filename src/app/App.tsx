@@ -50,6 +50,14 @@ const s = {
 type Page = "login" | "register" | "dashboard";
 type Tab  = "dashboard" | "github" | "leaderboard";
 
+interface GithubContributor {
+  login: string;
+  id: number;
+  avatar_url: string;
+  contributions: number;
+  html_url: string;
+}
+
 interface Skill {
   name: string;
   level: number;
@@ -582,6 +590,9 @@ export default function App() {
   const [loginPass, setLoginPass] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [contributors, setContributors] = useState<GithubContributor[]>([]);
+  const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
+  const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
 
   const [registerName, setRegisterName] = useState("");
   const [registerEmail, setRegisterEmail] = useState("");
@@ -611,6 +622,31 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("devpulse_current_user_id", String(currentUserId));
   }, [currentUserId]);
+
+  // Fetch contributors from GitHub API when leaderboard tab is active
+  useEffect(() => {
+    if (tab === "leaderboard") {
+      setLoadingLeaderboard(true);
+      setLeaderboardError(null);
+      fetch("https://api.github.com/repos/I-AM-A-PROGRAMER/DevPulse/contributors")
+        .then(res => {
+          if (!res.ok) {
+            throw new Error("Failed to fetch contributors from GitHub API");
+          }
+          return res.json();
+        })
+        .then(data => {
+          const sorted = data.sort((a: any, b: any) => b.contributions - a.contributions);
+          setContributors(sorted);
+          setLoadingLeaderboard(false);
+        })
+        .catch(err => {
+          console.error(err);
+          setLeaderboardError(err.message || "Failed to load leaderboard");
+          setLoadingLeaderboard(false);
+        });
+    }
+  }, [tab]);
 
   // Resolve current active developer instances
   const currentUser = useMemo(() => {
@@ -1929,247 +1965,228 @@ export default function App() {
             {tab === "leaderboard" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 16, animation: "fadeIn 0.3s ease both" }}>
                 
-                {/* Leaderboard Podium */}
-                <div style={{
-                  ...s.card,
-                  background: "linear-gradient(135deg, rgba(6,200,232,0.02) 0%, rgba(124,58,237,0.04) 100%)",
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
-                    <Icon.Trophy />
-                    <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, fontFamily: C.mono }}>
-                      Leaderboard Podium
-                    </h3>
-                    <span style={s.tag(C.primary)}>LIVE</span>
+                {/* Loader / Error states */}
+                {loadingLeaderboard && (
+                  <div style={{ textAlign: "center", padding: 40, color: C.textMuted, fontSize: 13, fontFamily: C.mono }}>
+                    // fetching contributor logs from GitHub API...
                   </div>
+                )}
 
-                  <div style={{ display: "flex", justifyContent: "center", alignItems: "flex-end", gap: 16, padding: "20px 0 10px", overflowX: "auto" }}>
-                    {podium.map((dev, idx) => {
-                      const actualRank = sortedLeaderboard.findIndex(d => d.id === dev.id) + 1;
-                      const score = calcScore(dev);
-                      const isFirst = actualRank === 1;
-                      const isSecond = actualRank === 2;
-                      
-                      const height = isFirst ? 110 : isSecond ? 85 : 65;
-                      const ribbon = isFirst ? "👑" : isSecond ? "🥈" : "🥉";
+                {leaderboardError && (
+                  <div style={{
+                    padding: "12px 16px",
+                    borderRadius: 12,
+                    background: "rgba(239, 68, 68, 0.08)",
+                    border: "1px solid rgba(239, 68, 68, 0.15)",
+                    color: C.red,
+                    fontSize: 13,
+                    fontFamily: C.mono,
+                  }}>
+                    Error: {leaderboardError}
+                  </div>
+                )}
 
-                      const borderCol = isFirst ? "rgba(245,158,11,0.3)" : isSecond ? "rgba(148,163,184,0.2)" : "rgba(205,127,50,0.2)";
-                      const grad = isFirst 
-                        ? "linear-gradient(180deg, rgba(245,158,11,0.22), rgba(245,158,11,0.05))" 
-                        : isSecond 
-                        ? "linear-gradient(180deg, rgba(148,163,184,0.15), rgba(148,163,184,0.03))"
-                        : "linear-gradient(180deg, rgba(205,127,50,0.15), rgba(205,127,50,0.03))";
+                {!loadingLeaderboard && !leaderboardError && (
+                  <>
+                    {/* Leaderboard Podium (GitHub Contributors) */}
+                    <div style={{
+                      ...s.card,
+                      background: "linear-gradient(135deg, rgba(6,200,232,0.02) 0%, rgba(124,58,237,0.04) 100%)",
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
+                        <Icon.Trophy />
+                        <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, fontFamily: C.mono }}>
+                          GitHub Contributor Podium
+                        </h3>
+                        <span style={s.tag(C.primary)}>LIVE</span>
+                      </div>
 
-                      return (
-                        <div
-                          key={dev.id}
-                          onClick={() => {
-                            setViewingDeveloperId(dev.id);
-                            setTab("dashboard");
-                          }}
-                          style={{
-                            display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
-                            cursor: "pointer", flex: 1, minWidth: 100, maxWidth: 130,
-                            transition: "transform 0.2s",
-                          }}
-                          className="podium-item"
-                        >
-                          <div style={{ position: "relative" }}>
-                            {isFirst && <div style={{ position: "absolute", top: -20, left: "50%", transform: "translateX(-50%)", fontSize: 16 }}>👑</div>}
-                            <Avatar src={dev.avatar} name={dev.name} size={isFirst ? 52 : 42} />
-                          </div>
-
-                          <div style={{ textAlign: "center" }}>
-                            <p style={{ fontSize: 12, fontWeight: 700, color: C.text, fontFamily: C.mono }}>{dev.name.split(' ')[0]}</p>
-                            <p style={{ fontSize: 10, fontFamily: C.mono, color: C.primary }}>{score} pts</p>
-                          </div>
-
-                          <div style={{
-                            width: "100%",
-                            height: height,
-                            background: grad,
-                            border: `1px solid ${borderCol}`,
-                            borderRadius: "8px 8px 0 0",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: 18,
-                            fontWeight: 800,
-                          }}>
-                            {ribbon}
-                          </div>
+                      {contributors.length === 0 ? (
+                        <div style={{ textAlign: "center", padding: "20px 0", color: C.textMuted, fontFamily: C.mono, fontSize: 12 }}>
+                          // no commits pushed to GitHub yet
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Filters */}
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
-                    <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: C.textMuted, display: "flex" }}>
-                      <Icon.Search />
-                    </span>
-                    <input
-                      type="text"
-                      placeholder="Search by name, username, role, language…"
-                      value={leaderboardSearch}
-                      onChange={(e) => setLeaderboardSearch(e.target.value)}
-                      style={{
-                        width: "100%", background: C.card,
-                        border: `1px solid ${C.border}`, borderRadius: 10,
-                        padding: "8px 12px 8px 36px", fontSize: 13,
-                        color: C.text, outline: "none", fontFamily: "inherit",
-                      }}
-                    />
-                  </div>
-
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {(["score", "commits", "streak", "prs"] as const).map((k) => (
-                      <button
-                        key={k}
-                        onClick={() => setLeaderboardSortBy(k)}
-                        style={{
-                          padding: "7px 14px", borderRadius: 8, fontSize: 11,
-                          fontFamily: C.mono, cursor: "pointer", transition: "all 0.15s",
-                          background: leaderboardSortBy === k ? C.primaryDim : "rgba(255,255,255,0.03)",
-                          color: leaderboardSortBy === k ? C.primary : C.textMuted,
-                          border: `1px solid ${leaderboardSortBy === k ? `${C.primary}40` : C.border}`,
-                          textTransform: "capitalize",
-                        }}
-                      >
-                        {k}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Score breakdown legend */}
-                <div style={{
-                  background: "rgba(6,200,232,0.03)",
-                  border: `1px solid rgba(6,200,232,0.1)`,
-                  borderRadius: 10, padding: "10px 14px",
-                  display: "flex", flexWrap: "wrap", gap: "6px 16px",
-                }}>
-                  <span style={{ fontSize: 10, color: C.textMuted, fontFamily: C.mono, textTransform: "uppercase", letterSpacing: "0.08em", alignSelf: "center" }}>
-                    Scoring matrix:
-                  </span>
-                  {[
-                    ["Commits", "×2", C.primary],
-                    ["PRs", "×5", C.violet],
-                    ["Reviews", "×3", C.green],
-                    ["Streak", "×4", C.amber],
-                    ["Avg skill", "×1.5", "#a78bfa"],
-                    ["Courses", "×10", "#34d399"],
-                  ].map(([label, mult, color]) => (
-                    <span key={label} style={{ fontSize: 11, fontFamily: C.mono }}>
-                      <span style={{ color: color as string }}>{label}</span>
-                      <span style={{ color: C.textMuted }}> {mult}</span>
-                    </span>
-                  ))}
-                </div>
-
-                {/* Leaderboard Table List */}
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {filteredLeaderboard.length === 0 ? (
-                    <div style={{ textAlign: "center", padding: 40, color: C.textMuted, fontSize: 13, fontFamily: C.mono }}>
-                      // no developers matched search query
-                    </div>
-                  ) : (
-                    filteredLeaderboard.map((dev) => {
-                      const rank = sortedLeaderboard.findIndex(d => d.id === dev.id) + 1;
-                      const score = calcScore(dev);
-                      const isMe = dev.id === currentUser.id;
-                      const maxScore = calcScore(sortedLeaderboard[0]) || 1;
-
-                      return (
-                        <div
-                          key={dev.id}
-                          style={{
-                            background: isMe ? "rgba(6,200,232,0.04)" : C.card,
-                            border: `1px solid ${isMe ? `${C.primary}30` : C.border}`,
-                            borderRadius: 12,
-                            padding: "12px 16px",
-                            transition: "all 0.15s",
-                            cursor: "pointer",
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.borderColor = C.borderHi;
-                            e.currentTarget.style.background = isMe ? "rgba(6,200,232,0.06)" : C.cardHover;
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.borderColor = isMe ? `${C.primary}30` : C.border;
-                            e.currentTarget.style.background = isMe ? "rgba(6,200,232,0.04)" : C.card;
-                          }}
-                          onClick={() => {
-                            setViewingDeveloperId(dev.id);
-                            setTab("dashboard");
-                          }}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                            <RankBadge rank={rank} />
+                      ) : (
+                        <div style={{ display: "flex", justifyContent: "center", alignItems: "flex-end", gap: 16, padding: "20px 0 10px", overflowX: "auto" }}>
+                          {/* We slice top 3 and order: 2nd, 1st, 3rd */}
+                          {[
+                            contributors[1], // 2nd
+                            contributors[0], // 1st
+                            contributors[2], // 3rd
+                          ].filter(Boolean).map((dev, idx) => {
+                            const actualRank = contributors.findIndex(d => d.id === dev.id) + 1;
+                            const commits = dev.contributions;
+                            const isFirst = actualRank === 1;
+                            const isSecond = actualRank === 2;
                             
-                            <Avatar src={dev.avatar} name={dev.name} size={36} />
-                            
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                                <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{dev.name}</span>
-                                {isMe && <Pill color={C.primary}>You</Pill>}
-                                <span style={{ fontSize: 11, color: C.textMuted, fontFamily: C.mono }}>@{dev.username}</span>
-                              </div>
+                            const height = isFirst ? 110 : isSecond ? 85 : 65;
+                            const ribbon = isFirst ? "👑" : isSecond ? "🥈" : "🥉";
 
-                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11 }}>
-                                <span style={{ color: C.textSub }}>{dev.role}</span>
-                                <span style={{ color: C.textMuted }}>·</span>
-                                <span style={{ color: C.primary, fontFamily: C.mono }}>{dev.topLanguage}</span>
-                              </div>
+                            const borderCol = isFirst ? "rgba(245,158,11,0.3)" : isSecond ? "rgba(148,163,184,0.2)" : "rgba(205,127,50,0.2)";
+                            const grad = isFirst 
+                              ? "linear-gradient(180deg, rgba(245,158,11,0.22), rgba(245,158,11,0.05))" 
+                              : isSecond 
+                              ? "linear-gradient(180deg, rgba(148,163,184,0.15), rgba(148,163,184,0.03))"
+                              : "linear-gradient(180deg, rgba(205,127,50,0.15), rgba(205,127,50,0.03))";
 
-                              {/* Progress bar compared to top scorer */}
-                              <div style={{ marginTop: 8, height: 2, background: "rgba(255,255,255,0.05)", borderRadius: 2, overflow: "hidden" }}>
+                            return (
+                              <div
+                                key={dev.id}
+                                onClick={() => window.open(dev.html_url, "_blank")}
+                                style={{
+                                  display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+                                  cursor: "pointer", flex: 1, minWidth: 100, maxWidth: 130,
+                                  transition: "transform 0.2s",
+                                }}
+                                className="podium-item"
+                              >
+                                <div style={{ position: "relative" }}>
+                                  {isFirst && <div style={{ position: "absolute", top: -20, left: "50%", transform: "translateX(-50%)", fontSize: 16 }}>👑</div>}
+                                  <Avatar src={dev.avatar_url} name={dev.login} size={isFirst ? 52 : 42} />
+                                </div>
+
+                                <div style={{ textAlign: "center" }}>
+                                  <p style={{ fontSize: 12, fontWeight: 700, color: C.text, fontFamily: C.mono }}>@{dev.login}</p>
+                                  <p style={{ fontSize: 10, fontFamily: C.mono, color: C.primary }}>{commits} commits</p>
+                                </div>
+
                                 <div style={{
-                                  height: "100%",
-                                  width: `${(score / maxScore) * 100}%`,
-                                  background: `linear-gradient(90deg, ${C.primary}, ${C.violet})`,
-                                  borderRadius: 2,
-                                }} />
+                                  width: "100%",
+                                  height: height,
+                                  background: grad,
+                                  border: `1px solid ${borderCol}`,
+                                  borderRadius: "8px 8px 0 0",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontSize: 18,
+                                  fontWeight: 800,
+                                }}>
+                                  {ribbon}
+                                </div>
                               </div>
-                            </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
 
-                            {/* Score info */}
-                            <div style={{ textAlign: "right", flexShrink: 0 }}>
-                              <p style={{ fontSize: 16, fontWeight: 800, fontFamily: C.mono, color: C.primary }}>{score}</p>
-                              <p style={{ fontSize: 10, color: C.textMuted, fontFamily: C.mono }}>points</p>
-                            </div>
+                    {/* Leaderboard Table List (GitHub contributors only) */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {contributors.length === 0 ? (
+                        <div style={{ textAlign: "center", padding: 40, color: C.textMuted, fontSize: 13, fontFamily: C.mono }}>
+                          // no contributors logs in GitHub API
+                        </div>
+                      ) : (
+                        contributors.map((dev, index) => {
+                          const rank = index + 1;
+                          const commits = dev.contributions;
+                          const maxCommits = contributors[0]?.contributions || 1;
+                          const matchedLocalDev = developers.find(
+                            (d) => d.username.toLowerCase() === dev.login.toLowerCase()
+                          );
+                          const isMe = matchedLocalDev?.id === currentUser.id;
 
-                            {/* View Action */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setViewingDeveloperId(dev.id);
-                                setTab("dashboard");
-                              }}
+                          return (
+                            <div
+                              key={dev.id}
                               style={{
-                                padding: "6px 12px",
-                                borderRadius: 8,
-                                fontSize: 11,
-                                fontWeight: 700,
-                                background: C.primaryDim,
-                                color: C.primary,
-                                border: `1px solid ${C.primary}30`,
+                                background: isMe ? "rgba(6,200,232,0.04)" : C.card,
+                                border: `1px solid ${isMe ? `${C.primary}30` : C.border}`,
+                                borderRadius: 12,
+                                padding: "12px 16px",
+                                transition: "all 0.15s",
                                 cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 4,
-                                fontFamily: C.mono,
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.borderColor = C.borderHi;
+                                e.currentTarget.style.background = isMe ? "rgba(6,200,232,0.06)" : C.cardHover;
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.borderColor = isMe ? `${C.primary}30` : C.border;
+                                e.currentTarget.style.background = isMe ? "rgba(6,200,232,0.04)" : C.card;
+                              }}
+                              onClick={() => {
+                                if (matchedLocalDev) {
+                                  setViewingDeveloperId(matchedLocalDev.id);
+                                  setTab("dashboard");
+                                } else {
+                                  window.open(dev.html_url, "_blank");
+                                }
                               }}
                             >
-                              <Icon.External /> view
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                                <RankBadge rank={rank} />
+                                
+                                <Avatar src={dev.avatar_url} name={dev.login} size={36} />
+                                
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                                    <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                                      {matchedLocalDev ? matchedLocalDev.name : dev.login}
+                                    </span>
+                                    {isMe && <Pill color={C.primary}>You</Pill>}
+                                    <span style={{ fontSize: 11, color: C.textMuted, fontFamily: C.mono }}>@{dev.login}</span>
+                                  </div>
+
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11 }}>
+                                    <span style={{ color: C.textSub }}>
+                                      {matchedLocalDev ? matchedLocalDev.role : "GitHub Contributor"}
+                                    </span>
+                                  </div>
+
+                                  {/* Progress bar based on commits */}
+                                  <div style={{ marginTop: 8, height: 2, background: "rgba(255,255,255,0.05)", borderRadius: 2, overflow: "hidden" }}>
+                                    <div style={{
+                                      height: "100%",
+                                      width: `${(commits / maxCommits) * 100}%`,
+                                      background: `linear-gradient(90deg, ${C.primary}, ${C.violet})`,
+                                      borderRadius: 2,
+                                    }} />
+                                  </div>
+                                </div>
+
+                                {/* Commits count info */}
+                                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                                  <p style={{ fontSize: 16, fontWeight: 800, fontFamily: C.mono, color: C.primary }}>{commits}</p>
+                                  <p style={{ fontSize: 10, color: C.textMuted, fontFamily: C.mono }}>commits</p>
+                                </div>
+
+                                {/* View Action */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (matchedLocalDev) {
+                                      setViewingDeveloperId(matchedLocalDev.id);
+                                      setTab("dashboard");
+                                    } else {
+                                      window.open(dev.html_url, "_blank");
+                                    }
+                                  }}
+                                  style={{
+                                    padding: "6px 12px",
+                                    borderRadius: 8,
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                    background: C.primaryDim,
+                                    color: C.primary,
+                                    border: `1px solid ${C.primary}30`,
+                                    cursor: "pointer",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 4,
+                                    fontFamily: C.mono,
+                                  }}
+                                >
+                                  <Icon.External /> view
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
