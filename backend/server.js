@@ -2,6 +2,8 @@ import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
 import dotenv from "dotenv";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 
 dotenv.config();
 
@@ -28,6 +30,7 @@ const DeveloperSchema = new mongoose.Schema({
   name: { type: String, required: true },
   username: { type: String, default: "" },
   email: { type: String, required: true, unique: true },
+  password: { type: String, default: "" }, // hashed password (optional for Google Auth)
   role: { type: String, default: "Developer Intern" },
   avatar: { type: String, default: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&auto=format" },
   joinDate: { type: String, default: "" },
@@ -150,21 +153,140 @@ const INITIAL_DEVS = [
 async function seedDatabase() {
   try {
     const count = await Developer.countDocuments();
+    const salt = await bcrypt.genSalt(10);
+    const hashedDefaultPassword = await bcrypt.hash("password123", salt);
+
     if (count === 0) {
       console.log("Database is empty. Seeding initial developer profiles...");
-      await Developer.insertMany(INITIAL_DEVS);
+      const devsToSeed = INITIAL_DEVS.map(dev => ({
+        ...dev,
+        password: hashedDefaultPassword
+      }));
+      await Developer.insertMany(devsToSeed);
       console.log("Database seeded successfully!");
     } else {
       console.log(`Database already has ${count} records. Skipping seeding.`);
+      // Run migration to add default password for existing seeded profiles if missing
+      const updateResult = await Developer.updateMany(
+        { $or: [{ password: "" }, { password: { $exists: false } }] },
+        { $set: { password: hashedDefaultPassword } }
+      );
+      if (updateResult.modifiedCount > 0) {
+        console.log(`Migration: Updated ${updateResult.modifiedCount} profiles with default passwords.`);
+      }
     }
   } catch (err) {
-    console.error("Error seeding database:", err);
+    console.error("Error seeding/migrating database:", err);
   }
+}
+
+// ─── JWT Authentication Middleware ─────────────────────────────────────────────
+const JWT_SECRET = process.env.JWT_SECRET || "default_devpulse_jwt_secret";
+
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  
+  if (!token) {
+    return res.status(401).json({ error: "Access token is missing" });
+  }
+
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      return res.status(403).json({ error: "Access token is invalid or expired" });
+    }
+    req.user = user;
+    next();
+  });
 }
 
 // ─── API Endpoints ────────────────────────────────────────────────────────────
 
-// 1. Get all developers
+// 1. Authentication Routes
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const { email, name, username, password } = req.body;
+    if (!email || !name) {
+      return res.status(400).json({ error: "Name and Email are required." });
+    }
+
+    const existingUser = await Developer.findOne({ email: email.toLowerCase() });
+    if (existingUser) {
+      return res.status(400).json({ error: "Email is already registered." });
+    }
+
+    const lastDev = await Developer.findOne({}).sort({ id: -1 });
+    const id = lastDev ? lastDev.id + 1 : 1;
+
+    let hashedPassword = "";
+    if (password) {
+      const salt = await bcrypt.genSalt(10);
+      hashedPassword = await bcrypt.hash(password, salt);
+    }
+
+    const newDev = new Developer({
+      id,
+      name,
+      email: email.toLowerCase(),
+      username: username || name.toLowerCase().replace(/\s+/g, '-'),
+      password: hashedPassword,
+      role: "Developer Intern",
+      joinDate: new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+      streak: 1,
+      commits: 0,
+      prs: 0,
+      reviews: 0,
+      coursesCompleted: 0,
+      totalCourses: 10,
+      skills: [],
+      recentActivity: `Joined DevPulse dashboard!`,
+      bio: "# add a bio in profile settings",
+      topLanguage: "JavaScript",
+      followers: 0,
+      following: 0,
+      repos: 0,
+      checkIns: [new Date().toISOString().split('T')[0]],
+      todos: []
+    });
+
+    await newDev.save();
+
+    const token = jwt.sign({ id: newDev.id, email: newDev.email }, JWT_SECRET, { expiresIn: "7d" });
+    res.status(201).json({ token, developer: newDev });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required." });
+    }
+
+    const developer = await Developer.findOne({ email: email.toLowerCase() });
+    if (!developer) {
+      return res.status(400).json({ error: "Invalid email or password." });
+    }
+
+    if (!developer.password) {
+      return res.status(400).json({ error: "Please log in using your Google account." });
+    }
+
+    const isMatch = await bcrypt.compare(password, developer.password);
+    if (!isMatch) {
+      return res.status(400).json({ error: "Invalid email or password." });
+    }
+
+    const token = jwt.sign({ id: developer.id, email: developer.email }, JWT_SECRET, { expiresIn: "7d" });
+    res.json({ token, developer });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 2. Get all developers
 app.get("/api/developers", async (req, res) => {
   try {
     const devs = await Developer.find({}).sort({ id: 1 });
@@ -174,12 +296,11 @@ app.get("/api/developers", async (req, res) => {
   }
 });
 
-// 2. Create new developer
+// 3. Create new developer (Used for Firebase Google Auto-Register)
 app.post("/api/developers", async (req, res) => {
   try {
     const newDevData = req.body;
     
-    // Ensure unique numeric ID if not provided
     if (!newDevData.id) {
       const lastDev = await Developer.findOne({}).sort({ id: -1 });
       newDevData.id = lastDev ? lastDev.id + 1 : 1;
@@ -187,17 +308,23 @@ app.post("/api/developers", async (req, res) => {
 
     const developer = new Developer(newDevData);
     await developer.save();
+
     res.status(201).json(developer);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// 3. Update developer profile
-app.put("/api/developers/:id", async (req, res) => {
+// 4. Update developer profile (Protected: User can only update their own profile)
+app.put("/api/developers/:id", authenticateToken, async (req, res) => {
   try {
     const devId = Number(req.params.id);
+    if (req.user.id !== devId) {
+      return res.status(403).json({ error: "You are not authorized to update this profile." });
+    }
+
     const updatedData = req.body;
+    delete updatedData.password; // Do not allow password modification through profile updates
 
     const developer = await Developer.findOneAndUpdate(
       { id: devId },
@@ -215,10 +342,14 @@ app.put("/api/developers/:id", async (req, res) => {
   }
 });
 
-// 4. Delete developer profile (Optional)
-app.delete("/api/developers/:id", async (req, res) => {
+// 5. Delete developer profile (Optional, Protected)
+app.delete("/api/developers/:id", authenticateToken, async (req, res) => {
   try {
     const devId = Number(req.params.id);
+    if (req.user.id !== devId) {
+      return res.status(403).json({ error: "You are not authorized to delete this profile." });
+    }
+
     const developer = await Developer.findOneAndDelete({ id: devId });
 
     if (!developer) {

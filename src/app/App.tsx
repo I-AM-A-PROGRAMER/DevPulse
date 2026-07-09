@@ -618,6 +618,7 @@ export default function App() {
   const [githubRepos, setGithubRepos] = useState<any[]>([]);
   const [loadingGithubData, setLoadingGithubData] = useState(false);
   const [githubUserStats, setGithubUserStats] = useState<{ repos: number; followers: number; following: number } | null>(null);
+  const [token, setToken] = useState<string>(() => localStorage.getItem("devpulse_jwt_token") || "");
 
   const [registerName, setRegisterName] = useState("");
   const [registerEmail, setRegisterEmail] = useState("");
@@ -666,7 +667,10 @@ export default function App() {
   const updateDeveloperInBackend = (updatedDev: Developer, callback?: () => void) => {
     fetch(`${API_URL}/developers/${updatedDev.id}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { 
+        "Content-Type": "application/json",
+        ...(token ? { "Authorization": `Bearer ${token}` } : {})
+      },
       body: JSON.stringify(updatedDev)
     })
       .then(res => {
@@ -687,6 +691,15 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("devpulse_current_user_id", String(currentUserId));
   }, [currentUserId]);
+
+  // Persist current logged in user token in localStorage
+  useEffect(() => {
+    if (token) {
+      localStorage.setItem("devpulse_jwt_token", token);
+    } else {
+      localStorage.removeItem("devpulse_jwt_token");
+    }
+  }, [token]);
 
   // Force new Google users (or any user without github username) to fill their profile
   useEffect(() => {
@@ -1041,70 +1054,71 @@ export default function App() {
     e.preventDefault();
     setLoginError(null);
     const email = loginEmail.trim();
-    if (!email) return;
+    const password = loginPass;
+    if (!email || !password) return;
 
-    // Search for existing dev
-    const matched = developers.find(d => d.email.toLowerCase() === email.toLowerCase());
-
-    if (matched) {
-      setCurrentUserId(matched.id);
-      setViewingDeveloperId(matched.id);
-      setPage("dashboard");
-      setTab("dashboard");
-      setLoginEmail("");
-      setLoginPass("");
-    } else {
-      setLoginError("Account does not exist. Please register first.");
-    }
+    fetch(`${API_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    })
+      .then(res => {
+        if (!res.ok) {
+          return res.json().then(data => { throw new Error(data.error || "Login failed"); });
+        }
+        return res.json();
+      })
+      .then(data => {
+        setToken(data.token);
+        setCurrentUserId(data.developer.id);
+        setViewingDeveloperId(data.developer.id);
+        setPage("dashboard");
+        setTab("dashboard");
+        setLoginEmail("");
+        setLoginPass("");
+      })
+      .catch(err => {
+        console.error("Login error:", err);
+        setLoginError(err.message);
+      });
   };
 
   // Register handler
   const handleRegisterSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setLoginError(null);
     const email = registerEmail.trim();
     const name = registerName.trim();
     const github = registerGithub.trim();
-    if (!email || !name) return;
+    const password = registerPass;
+    const confirm = registerConf;
 
-    // Create new profile
-    const newDev: Developer = {
-      id: Date.now(),
-      name: name,
-      username: github || name.toLowerCase().replace(/\s+/g, '-'),
-      email: email,
-      role: "Developer Intern",
-      avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&auto=format",
-      joinDate: new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-      streak: 1,
-      commits: 0,
-      prs: 0,
-      reviews: 0,
-      coursesCompleted: 0,
-      totalCourses: 10,
-      skills: [],
-      recentActivity: `Joined DevPulse dashboard!`,
-      bio: "# add a bio in profile settings",
-      topLanguage: "JavaScript",
-      followers: 0,
-      following: 0,
-      repos: 0,
-      checkIns: [new Date().toISOString().split('T')[0]],
-      todos: []
-    };
+    if (!email || !name || !password) {
+      alert("Name, Email, and Password are required.");
+      return;
+    }
 
-    fetch(`${API_URL}/developers`, {
+    if (password !== confirm) {
+      alert("Passwords do not match.");
+      return;
+    }
+
+    fetch(`${API_URL}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newDev)
+      body: JSON.stringify({ email, name, username: github, password })
     })
       .then(res => {
-        if (!res.ok) throw new Error("Failed to register");
+        if (!res.ok) {
+          return res.json().then(data => { throw new Error(data.error || "Registration failed"); });
+        }
         return res.json();
       })
-      .then(savedDev => {
-        setDevelopers(prev => [...prev, savedDev]);
-        setCurrentUserId(savedDev.id);
-        setViewingDeveloperId(savedDev.id);
+      .then(data => {
+        setToken(data.token);
+        setDevelopers(prev => [...prev, data.developer]);
+        setCurrentUserId(data.developer.id);
+        setViewingDeveloperId(data.developer.id);
         setPage("dashboard");
         setTab("dashboard");
 
@@ -1115,8 +1129,8 @@ export default function App() {
         setRegisterConf("");
       })
       .catch(err => {
-        console.error("Failed to register developer in backend:", err);
-        alert("Failed to register on backend. Please try again.");
+        console.error("Registration error:", err);
+        setLoginError(err.message || "Failed to register.");
       });
   };
 
@@ -1201,8 +1215,10 @@ export default function App() {
     } catch (err) {
       console.error("Firebase sign out error:", err);
     }
+    setToken("");
+    setCurrentUserId(0);
     setPage("login");
-    setViewingDeveloperId(currentUserId);
+    setViewingDeveloperId(0);
   };
 
   // Activity events linked to viewing developer
