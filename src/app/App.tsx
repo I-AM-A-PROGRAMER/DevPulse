@@ -920,9 +920,38 @@ export default function App() {
         setPage("dashboard");
         setTab("dashboard");
       } else {
-        // Sign out since the account doesn't exist
-        await signOut(auth);
-        setLoginError(`Access denied. Google account (${user.email}) is not registered.`);
+        // Auto-register user since it doesn't exist
+        const username = email.split('@')[0];
+        const newDev: Developer = {
+          id: Date.now(),
+          name: user.displayName || username.toUpperCase(),
+          username: username,
+          email: user.email,
+          role: "Developer Intern",
+          avatar: user.photoURL || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&auto=format",
+          joinDate: new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+          streak: 1,
+          commits: 0,
+          prs: 0,
+          reviews: 0,
+          coursesCompleted: 0,
+          totalCourses: 10,
+          skills: [],
+          recentActivity: `Joined DevPulse via Google Auth!`,
+          bio: "# add a bio in profile settings",
+          topLanguage: "JavaScript",
+          followers: 0,
+          following: 0,
+          repos: 0,
+          checkIns: [new Date().toISOString().split('T')[0]],
+          todos: []
+        };
+
+        setDevelopers(prev => [...prev, newDev]);
+        setCurrentUserId(newDev.id);
+        setViewingDeveloperId(newDev.id);
+        setPage("dashboard");
+        setTab("dashboard");
       }
     } catch (err: any) {
       console.error("Firebase auth error:", err);
