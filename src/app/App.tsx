@@ -593,6 +593,10 @@ export default function App() {
   const [contributors, setContributors] = useState<GithubContributor[]>([]);
   const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
   const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
+  const [githubEvents, setGithubEvents] = useState<any[]>([]);
+  const [githubRepos, setGithubRepos] = useState<any[]>([]);
+  const [loadingGithubData, setLoadingGithubData] = useState(false);
+  const [githubUserStats, setGithubUserStats] = useState<{ repos: number; followers: number; following: number } | null>(null);
 
   const [registerName, setRegisterName] = useState("");
   const [registerEmail, setRegisterEmail] = useState("");
@@ -623,11 +627,112 @@ export default function App() {
     localStorage.setItem("devpulse_current_user_id", String(currentUserId));
   }, [currentUserId]);
 
-  // Fetch contributors from GitHub API when leaderboard tab is active
+  // Fetch actual GitHub events and repositories for the viewing developer
+  useEffect(() => {
+    if (!viewingDeveloper || !viewingDeveloper.username) return;
+    setLoadingGithubData(true);
+
+    const fetchUser = fetch(`https://api.github.com/users/${viewingDeveloper.username}`)
+      .then(res => res.ok ? res.json() : null)
+      .catch(() => null);
+
+    const fetchEvents = fetch(`https://api.github.com/users/${viewingDeveloper.username}/events`)
+      .then(res => res.ok ? res.json() : [])
+      .catch(() => []);
+
+    const fetchRepos = fetch(`https://api.github.com/users/${viewingDeveloper.username}/repos?sort=updated`)
+      .then(res => res.ok ? res.json() : [])
+      .catch(() => []);
+
+    Promise.all([fetchUser, fetchEvents, fetchRepos]).then(([userData, eventsData, reposData]) => {
+      if (userData) {
+        setGithubUserStats({
+          repos: userData.public_repos,
+          followers: userData.followers,
+          following: userData.following
+        });
+      } else {
+        setGithubUserStats(null);
+      }
+
+      const mappedEvents = eventsData.map((ev: any) => {
+        let type = "push";
+        let msg = ev.type;
+        let detail = "";
+        let branch = "";
+        let commits = 0;
+
+        if (ev.type === "PushEvent") {
+          type = "push";
+          commits = ev.payload.commits?.length || 0;
+          branch = ev.payload.ref?.replace("refs/heads/", "") || "";
+          msg = `PUSH ${ev.actor.login}/${ev.repo.name.split("/")[1]}`;
+          detail = ev.payload.commits?.[0]?.message || "pushed commits";
+        } else if (ev.type === "PullRequestEvent") {
+          type = "pr";
+          msg = `PR ${ev.payload.action.toUpperCase()}: ${ev.repo.name}`;
+          detail = ev.payload.pull_request?.title || "";
+          branch = ev.payload.pull_request?.head?.ref || "";
+        } else if (ev.type === "WatchEvent") {
+          type = "star";
+          msg = `Starred repository: ${ev.repo.name}`;
+          detail = "starred";
+        } else if (ev.type === "ForkEvent") {
+          type = "fork";
+          msg = `Forked repository: ${ev.repo.name}`;
+          detail = "forked";
+        } else {
+          msg = `${ev.type.replace("Event", "")} in ${ev.repo.name}`;
+        }
+
+        const createdDate = new Date(ev.created_at);
+        const diffMs = Date.now() - createdDate.getTime();
+        const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
+        const diffDays = Math.floor(diffHrs / 24);
+        let timeStr = "just now";
+        if (diffDays > 0) timeStr = `${diffDays}d ago`;
+        else if (diffHrs > 0) timeStr = `${diffHrs}h ago`;
+        else {
+          const diffMins = Math.floor(diffMs / (1000 * 60));
+          if (diffMins > 0) timeStr = `${diffMins}m ago`;
+        }
+
+        return {
+          id: ev.id,
+          type,
+          repo: ev.repo.name,
+          msg,
+          detail,
+          time: timeStr,
+          branch,
+          commits: commits > 0 ? commits : undefined,
+        };
+      });
+
+      const mappedRepos = reposData.slice(0, 8).map((repo: any) => ({
+        name: repo.name,
+        stars: repo.stargazers_count,
+        forks: repo.forks_count,
+        openPRs: repo.open_issues_count,
+        lang: repo.language || "JavaScript",
+      }));
+
+      setGithubEvents(mappedEvents.slice(0, 10));
+      setGithubRepos(mappedRepos);
+      setLoadingGithubData(false);
+    }).catch((err) => {
+      console.error("Error fetching github details:", err);
+      setGithubUserStats(null);
+      setLoadingGithubData(false);
+    });
+  }, [viewingDeveloper.username]);
+
+  // Fetch contributors and their total lifetime commits from GitHub API for the leaderboard
   useEffect(() => {
     if (tab === "leaderboard") {
       setLoadingLeaderboard(true);
       setLeaderboardError(null);
+      
       fetch("https://api.github.com/repos/I-AM-A-PROGRAMER/DevPulse/contributors")
         .then(res => {
           if (!res.ok) {
@@ -635,8 +740,67 @@ export default function App() {
           }
           return res.json();
         })
-        .then(data => {
-          const sorted = data.sort((a: any, b: any) => b.contributions - a.contributions);
+        .then(async (contributorsList: any[]) => {
+          const usernamesSet = new Set<string>();
+          contributorsList.forEach(c => usernamesSet.add(c.login));
+          
+          developers.forEach(d => {
+            if (d.username && d.username.trim() && d.username !== "GT-AM-A-PROGRAMMER") {
+              usernamesSet.add(d.username.trim());
+            }
+          });
+
+          const fetchedContributors = await Promise.all(
+            Array.from(usernamesSet).map(async (username) => {
+              try {
+                let avatarUrl = "";
+                let htmlUrl = `https://github.com/${username}`;
+                const matched = contributorsList.find(c => c.login.toLowerCase() === username.toLowerCase());
+                
+                if (matched) {
+                  avatarUrl = matched.avatar_url;
+                  htmlUrl = matched.html_url;
+                } else {
+                  const userRes = await fetch(`https://api.github.com/users/${username}`);
+                  if (userRes.ok) {
+                    const userData = await userRes.json();
+                    avatarUrl = userData.avatar_url;
+                    htmlUrl = userData.html_url;
+                  } else {
+                    avatarUrl = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&auto=format";
+                  }
+                }
+
+                const searchRes = await fetch(`https://api.github.com/search/commits?q=author:${username}`);
+                let lifetimeCommits = 0;
+                if (searchRes.ok) {
+                  const searchData = await searchRes.json();
+                  lifetimeCommits = searchData.total_count || 0;
+                } else {
+                  lifetimeCommits = matched?.contributions || 0;
+                }
+
+                return {
+                  login: username,
+                  id: matched?.id || Date.now() + Math.random(),
+                  avatar_url: avatarUrl,
+                  contributions: lifetimeCommits,
+                  html_url: htmlUrl,
+                };
+              } catch (e) {
+                console.error("Error fetching stats for " + username, e);
+                return {
+                  login: username,
+                  id: Date.now() + Math.random(),
+                  avatar_url: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&auto=format",
+                  contributions: 0,
+                  html_url: `https://github.com/${username}`,
+                };
+              }
+            })
+          );
+
+          const sorted = fetchedContributors.sort((a, b) => b.contributions - a.contributions);
           setContributors(sorted);
           setLoadingLeaderboard(false);
         })
@@ -646,7 +810,7 @@ export default function App() {
           setLoadingLeaderboard(false);
         });
     }
-  }, [tab]);
+  }, [tab, developers]);
 
   // Resolve current active developer instances
   const currentUser = useMemo(() => {
@@ -1562,9 +1726,9 @@ export default function App() {
                       </p>
 
                       <div style={{ display: "flex", gap: 16, fontSize: 11, fontFamily: C.mono, color: C.textMuted }}>
-                        <span>{viewingDeveloper.repos} repos</span>
-                        <span>{viewingDeveloper.followers} followers</span>
-                        <span>{viewingDeveloper.following} following</span>
+                        <span>{githubUserStats ? githubUserStats.repos : viewingDeveloper.repos} repos</span>
+                        <span>{githubUserStats ? githubUserStats.followers : viewingDeveloper.followers} followers</span>
+                        <span>{githubUserStats ? githubUserStats.following : viewingDeveloper.following} following</span>
                       </div>
                     </div>
 
@@ -1712,38 +1876,48 @@ export default function App() {
 
                       {/* Log feed */}
                       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                        {devEvents.slice(0, 3).map((ev) => (
-                          <div key={ev.id} style={{
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "flex-start",
-                            padding: "10px 14px",
-                            background: "rgba(255,255,255,0.01)",
-                            border: `1px solid ${C.border}`,
-                            borderRadius: 10,
-                          }}>
-                            <div style={{ display: "flex", gap: 12 }}>
-                              <div style={{
-                                width: 22, height: 22, borderRadius: 6,
-                                background: "rgba(255,255,255,0.04)",
-                                display: "flex", alignItems: "center", justifyContent: "center",
-                                color: ev.type === "push" ? C.primary : ev.type === "pr" ? C.violet : C.amber,
-                                marginTop: 2,
-                              }}>
-                                {ev.type === "push" ? <Icon.Git /> : ev.type === "pr" ? <Icon.PR /> : <Icon.Star />}
-                              </div>
-                              <div>
-                                <div style={{ fontSize: 12, fontWeight: 600, color: C.text, fontFamily: C.mono }}>
-                                  {ev.msg}
-                                </div>
-                                <div style={{ fontSize: 11, color: C.textMuted, fontFamily: C.mono, marginTop: 4 }}>
-                                  {ev.detail}
-                                </div>
-                              </div>
-                            </div>
-                            <span style={{ fontSize: 10, color: C.textMuted, fontFamily: C.mono }}>{ev.time}</span>
+                        {loadingGithubData ? (
+                          <div style={{ padding: 20, textAlign: "center", color: C.textMuted, fontSize: 12, fontFamily: C.mono }}>
+                            // loading GitHub logs...
                           </div>
-                        ))}
+                        ) : githubEvents.length === 0 ? (
+                          <div style={{ padding: 20, textAlign: "center", color: C.textMuted, fontSize: 12, fontFamily: C.mono }}>
+                            // no recent GitHub activity logs found
+                          </div>
+                        ) : (
+                          githubEvents.slice(0, 3).map((ev) => (
+                            <div key={ev.id} style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "flex-start",
+                              padding: "10px 14px",
+                              background: "rgba(255,255,255,0.01)",
+                              border: `1px solid ${C.border}`,
+                              borderRadius: 10,
+                            }}>
+                              <div style={{ display: "flex", gap: 12 }}>
+                                <div style={{
+                                  width: 22, height: 22, borderRadius: 6,
+                                  background: "rgba(255,255,255,0.04)",
+                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                  color: ev.type === "push" ? C.primary : ev.type === "pr" ? C.violet : C.amber,
+                                  marginTop: 2,
+                                }}>
+                                  {ev.type === "push" ? <Icon.Git /> : ev.type === "pr" ? <Icon.PR /> : <Icon.Star />}
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: 12, fontWeight: 600, color: C.text, fontFamily: C.mono }}>
+                                    {ev.msg}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: C.textMuted, fontFamily: C.mono, marginTop: 4 }}>
+                                    {ev.detail}
+                                  </div>
+                                </div>
+                              </div>
+                              <span style={{ fontSize: 10, color: C.textMuted, fontFamily: C.mono }}>{ev.time}</span>
+                            </div>
+                          ))
+                        )}
                       </div>
                     </div>
 
@@ -1927,65 +2101,85 @@ export default function App() {
 
                 {/* Event list */}
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {devEvents.map((ev) => (
-                    <div key={ev.id} style={{
-                      ...s.card, padding: "14px 16px", display: "flex", gap: 14, alignItems: "flex-start",
-                      background: C.card,
-                    }}>
-                      <div style={{
-                        width: 32, height: 32, borderRadius: 8,
-                        background: "rgba(255,255,255,0.03)",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        color: ev.type === "push" ? C.primary : ev.type === "pr" ? C.violet : C.amber,
-                        flexShrink: 0,
-                      }}>
-                        {ev.type === "push" ? <Icon.Git /> : ev.type === "pr" ? <Icon.PR /> : <Icon.Star />}
-                      </div>
-
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
-                          <p style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{ev.msg}</p>
-                          {ev.status && <span style={s.tag(ev.status === "merged" ? C.violet : C.green)}>{ev.status}</span>}
-                          {ev.commits && <span style={s.tag(C.primary)}>{ev.commits} commits</span>}
-                        </div>
-                        
-                        <div style={{ display: "flex", gap: 14, fontSize: 11, fontFamily: C.mono, color: C.textMuted }}>
-                          <span>{ev.repo}</span>
-                          {ev.branch && <span>branch: {ev.branch}</span>}
-                          <span>{ev.time}</span>
-                        </div>
-                      </div>
+                  {loadingGithubData ? (
+                    <div style={{ textAlign: "center", padding: 40, color: C.textMuted, fontSize: 13, fontFamily: C.mono }}>
+                      // syncing event stream from GitHub...
                     </div>
-                  ))}
+                  ) : githubEvents.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: 40, color: C.textMuted, fontSize: 13, fontFamily: C.mono }}>
+                      // no public activity events found for @{viewingDeveloper.username}
+                    </div>
+                  ) : (
+                    githubEvents.map((ev) => (
+                      <div key={ev.id} style={{
+                        ...s.card, padding: "14px 16px", display: "flex", gap: 14, alignItems: "flex-start",
+                        background: C.card,
+                      }}>
+                        <div style={{
+                          width: 32, height: 32, borderRadius: 8,
+                          background: "rgba(255,255,255,0.03)",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          color: ev.type === "push" ? C.primary : ev.type === "pr" ? C.violet : C.amber,
+                          flexShrink: 0,
+                        }}>
+                          {ev.type === "push" ? <Icon.Git /> : ev.type === "pr" ? <Icon.PR /> : <Icon.Star />}
+                        </div>
+
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                            <p style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{ev.msg}</p>
+                            {ev.status && <span style={s.tag(ev.status === "merged" ? C.violet : C.green)}>{ev.status}</span>}
+                            {ev.commits && <span style={s.tag(C.primary)}>{ev.commits} commits</span>}
+                          </div>
+                          
+                          <div style={{ display: "flex", gap: 14, fontSize: 11, fontFamily: C.mono, color: C.textMuted }}>
+                            <span>{ev.repo}</span>
+                            {ev.branch && <span>branch: {ev.branch}</span>}
+                            <span>{ev.time}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
 
                 {/* Repository stats */}
                 <div style={s.card}>
                   <p style={{ fontSize: 13, fontFamily: C.mono, fontWeight: 700, color: C.primary, marginBottom: 16 }}>
-                    Repository Stats (Local Sync)
+                    Repository Stats (Live Sync)
                   </p>
                   
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
-                    {REPOS_LIST.map((repo) => (
-                      <div key={repo.name} style={{
-                        background: "rgba(255,255,255,0.02)",
-                        border: `1px solid ${C.border}`,
-                        borderRadius: 12,
-                        padding: "14px 16px",
-                      }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                          <span style={{ fontSize: 13, fontWeight: 700, color: C.text, fontFamily: C.mono }}>{repo.name}</span>
-                          <span style={s.tag(C.primary)}>{repo.lang}</span>
-                        </div>
+                  {loadingGithubData ? (
+                    <div style={{ textAlign: "center", padding: 20, color: C.textMuted, fontSize: 13, fontFamily: C.mono }}>
+                      // syncing repository stats...
+                    </div>
+                  ) : githubRepos.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: 20, color: C.textMuted, fontSize: 13, fontFamily: C.mono }}>
+                      // no public repositories found
+                    </div>
+                  ) : (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+                      {githubRepos.map((repo) => (
+                        <div key={repo.name} style={{
+                          background: "rgba(255,255,255,0.02)",
+                          border: `1px solid ${C.border}`,
+                          borderRadius: 12,
+                          padding: "14px 16px",
+                        }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text, fontFamily: C.mono }}>{repo.name}</span>
+                            <span style={s.tag(C.primary)}>{repo.lang}</span>
+                          </div>
 
-                        <div style={{ display: "flex", gap: 14, fontSize: 11, fontFamily: C.mono, color: C.textMuted }}>
-                          <span>⭐ {repo.stars} stars</span>
-                          <span>🍴 {repo.forks} forks</span>
-                          <span>PRs: {repo.openPRs} open</span>
+                          <div style={{ display: "flex", gap: 14, fontSize: 11, fontFamily: C.mono, color: C.textMuted }}>
+                            <span>⭐ {repo.stars} stars</span>
+                            <span>🍴 {repo.forks} forks</span>
+                            <span>PRs: {repo.openPRs} open</span>
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
