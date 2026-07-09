@@ -617,6 +617,18 @@ export default function App() {
   const [editRole, setEditRole] = useState("");
   const [editGithub, setEditGithub] = useState("");
 
+  // Resolve current active developer instances
+  const currentUser = useMemo(() => {
+    return developers.find(d => d.id === currentUserId) || developers[0];
+  }, [developers, currentUserId]);
+
+  const viewingDeveloper = useMemo(() => {
+    return developers.find(d => d.id === viewingDeveloperId) || currentUser;
+  }, [developers, viewingDeveloperId, currentUser]);
+
+  // Helper check for read-only view
+  const isReadOnly = viewingDeveloper.id !== currentUser.id;
+
   // Persist developers list in localStorage whenever it changes
   useEffect(() => {
     localStorage.setItem("devpulse_developers", JSON.stringify(developers));
@@ -626,6 +638,17 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("devpulse_current_user_id", String(currentUserId));
   }, [currentUserId]);
+
+  // Force new Google users (or any user without github username) to fill their profile
+  useEffect(() => {
+    if (page === "dashboard" && currentUser && !currentUser.username) {
+      setEditName(currentUser.name);
+      setEditBio(currentUser.bio || "");
+      setEditRole(currentUser.role || "");
+      setEditGithub("");
+      setShowProfileModal(true);
+    }
+  }, [page, currentUser]);
 
   // Fetch actual GitHub events and repositories for the viewing developer
   useEffect(() => {
@@ -745,7 +768,7 @@ export default function App() {
           contributorsList.forEach(c => usernamesSet.add(c.login));
           
           developers.forEach(d => {
-            if (d.username && d.username.trim() && d.username !== "GT-AM-A-PROGRAMMER") {
+            if (d.username && d.username.trim() && !d.email.endsWith("@devpulse.io")) {
               usernamesSet.add(d.username.trim());
             }
           });
@@ -812,17 +835,7 @@ export default function App() {
     }
   }, [tab, developers]);
 
-  // Resolve current active developer instances
-  const currentUser = useMemo(() => {
-    return developers.find(d => d.id === currentUserId) || developers[0];
-  }, [developers, currentUserId]);
 
-  const viewingDeveloper = useMemo(() => {
-    return developers.find(d => d.id === viewingDeveloperId) || currentUser;
-  }, [developers, viewingDeveloperId, currentUser]);
-
-  // Helper check for read-only view
-  const isReadOnly = viewingDeveloper.id !== currentUser.id;
 
   // Handle checking in (streaks)
   const handleCheckIn = () => {
@@ -979,6 +992,12 @@ export default function App() {
     e.preventDefault();
     if (isReadOnly) return;
 
+    const trimmedGithub = editGithub.trim();
+    if (!trimmedGithub) {
+      alert("GitHub Username is mandatory!");
+      return;
+    }
+
     setDevelopers(prev => prev.map(dev => {
       if (dev.id === currentUser.id) {
         return {
@@ -986,7 +1005,7 @@ export default function App() {
           name: editName.trim() || dev.name,
           bio: editBio.trim() || dev.bio,
           role: editRole.trim() || dev.role,
-          username: editGithub.trim() || dev.username
+          username: trimmedGithub
         };
       }
       return dev;
@@ -1089,7 +1108,7 @@ export default function App() {
         const newDev: Developer = {
           id: Date.now(),
           name: user.displayName || username.toUpperCase(),
-          username: username,
+          username: "", // empty so it triggers the mandatory username input popup!
           email: user.email,
           role: "Developer Intern",
           avatar: user.photoURL || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&auto=format",
@@ -2543,14 +2562,16 @@ export default function App() {
           position: "fixed", inset: 0, zIndex: 100,
           background: "rgba(8,12,24,0.85)", backdropFilter: "blur(6px)",
           display: "flex", alignItems: "center", justifyContent: "center", padding: 16
-        }} onClick={() => setShowProfileModal(false)}>
+        }} onClick={() => { if (currentUser && currentUser.username) setShowProfileModal(false); }}>
           <div style={{
             background: C.card, border: `1px solid ${C.borderHi}`, borderRadius: 20,
             width: "100%", maxWidth: 440, padding: 24, animation: "fadeIn 0.2s ease both"
           }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
               <h3 style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: C.mono }}>$ edit_profile</h3>
-              <button onClick={() => setShowProfileModal(false)} style={{ color: C.textMuted, cursor: "pointer" }}><Icon.Close /></button>
+              {currentUser && currentUser.username && (
+                <button onClick={() => setShowProfileModal(false)} style={{ color: C.textMuted, cursor: "pointer" }}><Icon.Close /></button>
+              )}
             </div>
 
             <form onSubmit={handleSaveProfile} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -2598,17 +2619,19 @@ export default function App() {
               </div>
 
               <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-                <button
-                  type="button"
-                  onClick={() => setShowProfileModal(false)}
-                  style={{
-                    flex: 1, padding: "10px", borderRadius: 10, fontSize: 12, fontWeight: 600,
-                    background: "rgba(255,255,255,0.03)", border: `1px solid ${C.border}`, color: C.textSub,
-                    fontFamily: C.mono, cursor: "pointer"
-                  }}
-                >
-                  cancel
-                </button>
+                {currentUser && currentUser.username && (
+                  <button
+                    type="button"
+                    onClick={() => setShowProfileModal(false)}
+                    style={{
+                      flex: 1, padding: "10px", borderRadius: 10, fontSize: 12, fontWeight: 600,
+                      background: "rgba(255,255,255,0.03)", border: `1px solid ${C.border}`, color: C.textSub,
+                      fontFamily: C.mono, cursor: "pointer"
+                    }}
+                  >
+                    cancel
+                  </button>
+                )}
                 <button
                   type="submit"
                   style={{
