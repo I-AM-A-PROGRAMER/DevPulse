@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, CSSProperties, ReactNode } from "react";
 import { auth, googleProvider, signInWithPopup, signOut } from "../firebase";
 
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
   bg:        "#09090b",
@@ -116,7 +118,7 @@ const INITIAL_DEVS: Developer[] = [
   {
     id: 1,
     name: "SUPRIYO",
-    username: "GT-AM-A-PROGRAMMER",
+    username: "I-AM-A-PROGRAMER",
     email: "supriyo3606@gmail.com",
     role: "Full-Stack Intern",
     avatar: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=80&h=80&fit=crop&auto=format",
@@ -563,10 +565,29 @@ const REPOS_LIST = [
 
 // ─── Root Application ─────────────────────────────────────────────────────────
 export default function App() {
-  // Load developers from localStorage, or initialize with mock data
   const [developers, setDevelopers] = useState<Developer[]>(() => {
     const saved = localStorage.getItem("devpulse_developers");
-    return saved ? JSON.parse(saved) : INITIAL_DEVS;
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as Developer[];
+        let changed = false;
+        const migrated = parsed.map(d => {
+          if (d.id === 1 && d.username === "GT-AM-A-PROGRAMMER") {
+            changed = true;
+            return { ...d, username: "I-AM-A-PROGRAMER" };
+          }
+          return d;
+        });
+        if (changed) {
+          localStorage.setItem("devpulse_developers", JSON.stringify(migrated));
+          return migrated;
+        }
+        return parsed;
+      } catch (e) {
+        return INITIAL_DEVS;
+      }
+    }
+    return INITIAL_DEVS;
   });
 
   // Current logged in user (id)
@@ -629,10 +650,38 @@ export default function App() {
   // Helper check for read-only view
   const isReadOnly = viewingDeveloper.id !== currentUser.id;
 
-  // Persist developers list in localStorage whenever it changes
+  // Fetch developers on mount from Express + MongoDB backend
   useEffect(() => {
-    localStorage.setItem("devpulse_developers", JSON.stringify(developers));
-  }, [developers]);
+    fetch(`${API_URL}/developers`)
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setDevelopers(data);
+        }
+      })
+      .catch(err => console.error("Error loading developers from MongoDB:", err));
+  }, []);
+
+  // Helper to persist updates to MongoDB backend and state
+  const updateDeveloperInBackend = (updatedDev: Developer, callback?: () => void) => {
+    fetch(`${API_URL}/developers/${updatedDev.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updatedDev)
+    })
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to save changes to backend");
+        return res.json();
+      })
+      .then(savedDev => {
+        setDevelopers(prev => prev.map(d => d.id === savedDev.id ? savedDev : d));
+        if (callback) callback();
+      })
+      .catch(err => {
+        console.error("Failed to update developer in backend:", err);
+        alert("Failed to save changes to MongoDB backend. Please try again.");
+      });
+  };
 
   // Persist current logged in user in localStorage
   useEffect(() => {
@@ -768,7 +817,7 @@ export default function App() {
           contributorsList.forEach(c => usernamesSet.add(c.login));
           
           developers.forEach(d => {
-            if (d.username && d.username.trim() && !d.email.endsWith("@devpulse.io")) {
+            if (d.username && d.username.trim() && d.username !== "GT-AM-A-PROGRAMMER" && !d.email.endsWith("@devpulse.io")) {
               usernamesSet.add(d.username.trim());
             }
           });
@@ -845,32 +894,28 @@ export default function App() {
     // Check if already checked in today
     if (viewingDeveloper.checkIns.includes(todayStr)) return;
 
-    setDevelopers(prev => prev.map(dev => {
-      if (dev.id === currentUser.id) {
-        const newCheckIns = [...dev.checkIns, todayStr];
-        
-        // Calculate new streak
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toISOString().split('T')[0];
-        
-        let newStreak = dev.streak;
-        if (dev.checkIns.includes(yesterdayStr) || dev.streak === 0) {
-          newStreak += 1;
-        } else {
-          newStreak = 1;
-        }
+    const newCheckIns = [...currentUser.checkIns, todayStr];
+    
+    // Calculate new streak
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    
+    let newStreak = currentUser.streak;
+    if (currentUser.checkIns.includes(yesterdayStr) || currentUser.streak === 0) {
+      newStreak += 1;
+    } else {
+      newStreak = 1;
+    }
 
-        return {
-          ...dev,
-          streak: newStreak,
-          commits: dev.commits + 1, // gamification commit + 1
-          checkIns: newCheckIns,
-          recentActivity: `streak.start() - Checked in for day ${newStreak}`
-        };
-      }
-      return dev;
-    }));
+    const updated = {
+      ...currentUser,
+      streak: newStreak,
+      commits: currentUser.commits + 1, // gamification commit + 1
+      checkIns: newCheckIns,
+      recentActivity: `streak.start() - Checked in for day ${newStreak}`
+    };
+    updateDeveloperInBackend(updated);
   };
 
   // Add new skill
@@ -878,41 +923,34 @@ export default function App() {
     e.preventDefault();
     if (isReadOnly || !newSkillName.trim()) return;
 
-    setDevelopers(prev => prev.map(dev => {
-      if (dev.id === currentUser.id) {
-        // If skill already exists, overwrite. Otherwise add new.
-        const existingIdx = dev.skills.findIndex(s => s.name.toLowerCase() === newSkillName.trim().toLowerCase());
-        let updatedSkills = [...dev.skills];
-        if (existingIdx >= 0) {
-          updatedSkills[existingIdx] = { name: newSkillName.trim(), level: newSkillLevel };
-        } else {
-          updatedSkills.push({ name: newSkillName.trim(), level: newSkillLevel });
-        }
-        return {
-          ...dev,
-          skills: updatedSkills
-        };
-      }
-      return dev;
-    }));
+    // If skill already exists, overwrite. Otherwise add new.
+    const existingIdx = currentUser.skills.findIndex(s => s.name.toLowerCase() === newSkillName.trim().toLowerCase());
+    let updatedSkills = [...currentUser.skills];
+    if (existingIdx >= 0) {
+      updatedSkills[existingIdx] = { name: newSkillName.trim(), level: newSkillLevel };
+    } else {
+      updatedSkills.push({ name: newSkillName.trim(), level: newSkillLevel });
+    }
 
-    setNewSkillName("");
-    setNewSkillLevel(50);
-    setShowSkillModal(false);
+    const updated = {
+      ...currentUser,
+      skills: updatedSkills
+    };
+    updateDeveloperInBackend(updated, () => {
+      setNewSkillName("");
+      setNewSkillLevel(50);
+      setShowSkillModal(false);
+    });
   };
 
   // Delete skill
   const handleDeleteSkill = (skillName: string) => {
     if (isReadOnly) return;
-    setDevelopers(prev => prev.map(dev => {
-      if (dev.id === currentUser.id) {
-        return {
-          ...dev,
-          skills: dev.skills.filter(s => s.name !== skillName)
-        };
-      }
-      return dev;
-    }));
+    const updated = {
+      ...currentUser,
+      skills: currentUser.skills.filter(s => s.name !== skillName)
+    };
+    updateDeveloperInBackend(updated);
   };
 
   // Add new goal/todo
@@ -920,62 +958,49 @@ export default function App() {
     e.preventDefault();
     if (isReadOnly || !newGoalText.trim()) return;
 
-    setDevelopers(prev => prev.map(dev => {
-      if (dev.id === currentUser.id) {
-        const newGoal = {
-          id: Date.now(),
-          text: newGoalText.trim(),
-          done: false
-        };
-        return {
-          ...dev,
-          todos: [...dev.todos, newGoal]
-        };
-      }
-      return dev;
-    }));
-
-    setNewGoalText("");
-    setShowGoalModal(false);
+    const newGoal = {
+      id: Date.now(),
+      text: newGoalText.trim(),
+      done: false
+    };
+    const updated = {
+      ...currentUser,
+      todos: [...currentUser.todos, newGoal]
+    };
+    updateDeveloperInBackend(updated, () => {
+      setNewGoalText("");
+      setShowGoalModal(false);
+    });
   };
 
   // Toggle goal/todo completion
   const handleToggleGoal = (goalId: number) => {
     if (isReadOnly) return;
-    setDevelopers(prev => prev.map(dev => {
-      if (dev.id === currentUser.id) {
-        const updatedTodos = dev.todos.map(t => {
-          if (t.id === goalId) {
-            return { ...t, done: !t.done };
-          }
-          return t;
-        });
-
-        // Trigger course count updates optionally
-        const doneCount = updatedTodos.filter(t => t.done).length;
-
-        return {
-          ...dev,
-          todos: updatedTodos,
-          coursesCompleted: doneCount <= dev.totalCourses ? doneCount : dev.coursesCompleted
-        };
+    const updatedTodos = currentUser.todos.map(t => {
+      if (t.id === goalId) {
+        return { ...t, done: !t.done };
       }
-      return dev;
-    }));
+      return t;
+    });
+
+    const doneCount = updatedTodos.filter(t => t.done).length;
+
+    const updated = {
+      ...currentUser,
+      todos: updatedTodos,
+      coursesCompleted: doneCount <= currentUser.totalCourses ? doneCount : currentUser.coursesCompleted
+    };
+    updateDeveloperInBackend(updated);
   };
 
   // Delete goal/todo
   const handleDeleteGoal = (goalId: number) => {
     if (isReadOnly) return;
-    setDevelopers(prev => prev.map(dev => {
-      if (dev.id === currentUser.id) {
-        return {
-          ...dev,
-          todos: dev.todos.filter(t => t.id !== goalId)
-        };
-      }
-      return dev;
-    }));
+    const updated = {
+      ...currentUser,
+      todos: currentUser.todos.filter(t => t.id !== goalId)
+    };
+    updateDeveloperInBackend(updated);
   };
 
   // Handle edit profile modal open & save
@@ -998,20 +1023,17 @@ export default function App() {
       return;
     }
 
-    setDevelopers(prev => prev.map(dev => {
-      if (dev.id === currentUser.id) {
-        return {
-          ...dev,
-          name: editName.trim() || dev.name,
-          bio: editBio.trim() || dev.bio,
-          role: editRole.trim() || dev.role,
-          username: trimmedGithub
-        };
-      }
-      return dev;
-    }));
+    const updated = {
+      ...currentUser,
+      name: editName.trim() || currentUser.name,
+      bio: editBio.trim() || currentUser.bio,
+      role: editRole.trim() || currentUser.role,
+      username: trimmedGithub
+    };
 
-    setShowProfileModal(false);
+    updateDeveloperInBackend(updated, () => {
+      setShowProfileModal(false);
+    });
   };
 
   // Login handler
@@ -1070,17 +1092,32 @@ export default function App() {
       todos: []
     };
 
-    setDevelopers(prev => [...prev, newDev]);
-    setCurrentUserId(newDev.id);
-    setViewingDeveloperId(newDev.id);
-    setPage("dashboard");
-    setTab("dashboard");
+    fetch(`${API_URL}/developers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newDev)
+    })
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to register");
+        return res.json();
+      })
+      .then(savedDev => {
+        setDevelopers(prev => [...prev, savedDev]);
+        setCurrentUserId(savedDev.id);
+        setViewingDeveloperId(savedDev.id);
+        setPage("dashboard");
+        setTab("dashboard");
 
-    setRegisterEmail("");
-    setRegisterName("");
-    setRegisterGithub("");
-    setRegisterPass("");
-    setRegisterConf("");
+        setRegisterEmail("");
+        setRegisterName("");
+        setRegisterGithub("");
+        setRegisterPass("");
+        setRegisterConf("");
+      })
+      .catch(err => {
+        console.error("Failed to register developer in backend:", err);
+        alert("Failed to register on backend. Please try again.");
+      });
   };
 
   // Google Login / Signup via Firebase
@@ -1130,11 +1167,26 @@ export default function App() {
           todos: []
         };
 
-        setDevelopers(prev => [...prev, newDev]);
-        setCurrentUserId(newDev.id);
-        setViewingDeveloperId(newDev.id);
-        setPage("dashboard");
-        setTab("dashboard");
+        fetch(`${API_URL}/developers`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(newDev)
+        })
+          .then(res => {
+            if (!res.ok) throw new Error("Failed to auto-register");
+            return res.json();
+          })
+          .then(savedDev => {
+            setDevelopers(prev => [...prev, savedDev]);
+            setCurrentUserId(savedDev.id);
+            setViewingDeveloperId(savedDev.id);
+            setPage("dashboard");
+            setTab("dashboard");
+          })
+          .catch(err => {
+            console.error("Failed to auto-register via Google in backend:", err);
+            setLoginError("Failed to register account on backend. Please try again.");
+          });
       }
     } catch (err: any) {
       console.error("Firebase auth error:", err);
@@ -1157,7 +1209,7 @@ export default function App() {
   const devEvents = useMemo(() => {
     // If it's Supriyo, show some custom events or standard pool
     return EVENTS_POOL.filter(e => {
-      if (viewingDeveloper.username === "GT-AM-A-PROGRAMMER") {
+      if (viewingDeveloper.username === "I-AM-A-PROGRAMER" || viewingDeveloper.username === "GT-AM-A-PROGRAMMER") {
         return e.repo.includes("GT-AM-A-PROGRAMMER") || e.type === "star" || e.type === "fork";
       }
       return true; // show pool for others
@@ -2589,7 +2641,7 @@ export default function App() {
               />
               <InputField
                 label="GitHub Username"
-                placeholder="GT-AM-A-PROGRAMMER"
+                placeholder="I-AM-A-PROGRAMER"
                 value={editGithub}
                 onChange={setEditGithub}
               />
